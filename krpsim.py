@@ -1,4 +1,4 @@
-import random
+import random   
 import copy
 from typing import List, Dict, Tuple
 import re
@@ -6,8 +6,8 @@ import re
 class Process:
     def __init__(self, name: str, inputs: Dict[str, int], outputs: Dict[str, int], duration: int):
         self.name = name
-        self.inputs = inputs  # ressources nécessaires
-        self.outputs = outputs  # ressources produites
+        self.inputs = inputs  
+        self.outputs = outputs  
         self.duration = duration
         
     def can_execute(self, stocks: Dict[str, int]) -> bool:
@@ -37,6 +37,43 @@ class ProcessFileParser:
         self.processes = []
         self.optimize_targets = []
 
+
+    def find_child(self, index, to_find, target):
+        for process in self.processes:
+            max_output_key = max(process.outputs.items(), key=lambda item: item[1])[0]
+            if max_output_key in to_find and max_output_key != target:
+                if process not in self.pathes[index]:
+                    self.pathes[index].append(process)
+                    self.find_child(index, process.inputs, target)
+
+
+    def optimize(self):
+        target = ""
+        for targ in self.optimize_targets:
+            if not "time" in targ :
+                target = targ
+        target_output_processes = []
+        for process in self.processes:
+            if target in process.outputs:
+                target_output_processes.append(process)
+
+        self.pathes = [[] for _ in range(len(target_output_processes))]
+
+        for index, process in enumerate(target_output_processes):
+            self.pathes[index].append(process)
+            self.find_child(index, process.inputs, target)
+
+        biggest_amount = 0
+        biggest_amout_index = 0
+        for i, path in enumerate(self.pathes):
+            first_process = path[0]
+            output_qty = first_process.outputs.get(target, 0)
+            if output_qty > biggest_amount:
+                biggest_amount = output_qty
+                best_path_index = i
+
+        self.best_path = self.pathes[best_path_index]
+
     def get_all_resource_types(self) -> List[str]:
         all_resources = set(self.initial_stocks.keys())
         
@@ -55,21 +92,17 @@ class ProcessFileParser:
                 continue
                 
             if ':' in line and not line.startswith('optimize:'):
-                # Parse stock initial ou processus
                 if '(' not in line:
-                    # Stock initial
                     parts = line.split(':')
                     if len(parts) == 2:
                         resource, quantity = parts
                         self.initial_stocks[resource.strip()] = int(quantity.strip())
                 else:
-                    # Processus
                     self.parse_process(line)
             elif line.startswith('optimize:'):
-                # Parse cibles d'optimisation - format: optimize:(target1;target2;...)
                 targets_str = line.replace('optimize:', '').strip()
                 if targets_str.startswith('(') and targets_str.endswith(')'):
-                    targets_str = targets_str[1:-1]  # Enlever les parenthèses
+                    targets_str = targets_str[1:-1]  
                 targets = targets_str.split(';')
                 for target in targets:
                     target = target.strip()
@@ -77,10 +110,6 @@ class ProcessFileParser:
                         self.optimize_targets.append(target)
     
     def parse_process(self, line: str):
-        # Format: nom:(inputs):(outputs):duration
-        # Exemple: process1:(iron:2;wood:1):(sword:1):5
-        
-        # Utiliser regex pour parser la ligne
         pattern = r'(\w+):\(([^)]*)\):\(([^)]*)\):(\d+)'
         match = re.match(pattern, line)
         
@@ -106,126 +135,214 @@ class ProcessFileParser:
         return resources
 
 class Individual:
-    def __init__(self, process_sequence: List[str]):
-        self.process_sequence = process_sequence
+    def __init__(self, process_counts: Dict[str, int]):
+        self.process_counts = process_counts  # Nombre de fois qu'on exécute chaque processus
         self.fitness = 0
         self.total_time = 0
         self.final_stocks = {}
+        self.execution_sequence = []
     
     def __str__(self):
-        return f"Sequence: {self.process_sequence}, Fitness: {self.fitness}, Time: {self.total_time}"
+        return f"Counts: {self.process_counts}, Fitness: {self.fitness}, Time: {self.total_time}"
 
 class GeneticAlgorithm:
-    def __init__(self, parser: ProcessFileParser, population_size=100, generations=1000, 
-                 mutation_rate=0.1, crossover_rate=0.8):
+    def __init__(self, parser: ProcessFileParser, population_size=50, generations=500, 
+                 mutation_rate=0.2, crossover_rate=0.8, time_limit=50000):
         self.parser = parser
         self.population_size = population_size
         self.generations = generations
         self.mutation_rate = mutation_rate
         self.crossover_rate = crossover_rate
+        self.time_limit = time_limit
         self.population = []
         
-    def create_random_individual(self) -> Individual:
-        stocks = self.parser.initial_stocks.copy()
-        sequence = []
-        attempts = 0
-
-        while attempts < 100:  # éviter boucles infinies
-            valid_processes = [p for p in self.parser.processes if p.can_execute(stocks)]
-            if not valid_processes:
-                break
-            process = random.choice(valid_processes)
-            sequence.append(process.name)
-            stocks = process.execute(stocks)
-            attempts += 1
+        # Analyser la rentabilité des processus
+        self.analyze_profitability()
         
-        return Individual(sequence)
+    def analyze_profitability(self):
+        """Analyse la rentabilité de chaque processus"""
+        self.process_profitability = {}
+        
+        for process in self.parser.processes:
+            profit = 0
+            cost = 0
+            
+            # Calculer le coût en euros
+            cost += process.inputs.get('euro', 0)
+            
+            # Calculer le gain en euros
+            profit += process.outputs.get('euro', 0)
+            
+            # Rentabilité = gain / (coût + durée)
+            if cost > 0 or process.duration > 0:
+                self.process_profitability[process.name] = profit / (cost + process.duration/100)
+            else:
+                self.process_profitability[process.name] = profit
+        
+        print("Analyse de rentabilité:")
+        for name, profit in sorted(self.process_profitability.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {name}: {profit:.3f}")
+        
+    def create_random_individual(self) -> Individual:
+        """Crée un individu avec des compteurs de processus"""
+        process_counts = {}
+        
+        # Favoriser les processus rentables
+        profitable_processes = [name for name, profit in self.process_profitability.items() if profit > 0]
+        
+        for process in self.parser.processes:
+            if process.name in profitable_processes:
+                # Plus de chances pour les processus rentables
+                max_count = random.randint(50, 500) if self.process_profitability[process.name] > 1 else random.randint(1, 50)
+            else:
+                max_count = random.randint(1, 100)
+                
+            process_counts[process.name] = random.randint(0, max_count)
+        
+        return Individual(process_counts)
+    
+    def simulate_execution(self, individual: Individual):
+        """Simule l'exécution avec gestion du parallélisme"""
+        stocks = self.parser.initial_stocks.copy()
+        current_time = 0
+        running_processes = []  # [(end_time, process, outputs)]
+        remaining_counts = individual.process_counts.copy()
+        execution_sequence = []
+        
+        process_map = {p.name: p for p in self.parser.processes}
+        
+        while current_time < self.time_limit:
+            # Terminer les processus finis
+            finished = [p for p in running_processes if p[0] <= current_time]
+            for end_time, process, outputs in finished:
+                for resource, quantity in outputs.items():
+                    stocks[resource] = stocks.get(resource, 0) + quantity
+                execution_sequence.append(f"{process.name} finished at {end_time}")
+            
+            running_processes = [p for p in running_processes if p[0] > current_time]
+            
+            # Lancer de nouveaux processus
+            launched_any = True
+            while launched_any and current_time < self.time_limit:
+                launched_any = False
+                
+                # Trier les processus par priorité (rentabilité)
+                process_priority = [(name, count) for name, count in remaining_counts.items() 
+                                  if count > 0 and name in process_map]
+                process_priority.sort(key=lambda x: self.process_profitability.get(x[0], 0), reverse=True)
+                
+                for process_name, count in process_priority:
+                    if count <= 0:
+                        continue
+                        
+                    process = process_map[process_name]
+                    
+                    if process.can_execute(stocks):
+                        # Consommer les inputs
+                        for resource, needed in process.inputs.items():
+                            stocks[resource] -= needed
+                        
+                        # Programmer la fin du processus
+                        end_time = current_time + process.duration
+                        running_processes.append((end_time, process, process.outputs))
+                        
+                        remaining_counts[process_name] -= 1
+                        execution_sequence.append(f"{process_name} started at {current_time}")
+                        launched_any = True
+                        
+                        if end_time > self.time_limit:
+                            break
+            
+            # Avancer le temps
+            if running_processes:
+                current_time = min(p[0] for p in running_processes)
+            else:
+                break
+                
+            if current_time >= self.time_limit:
+                break
+        
+        individual.total_time = min(current_time, self.time_limit)
+        individual.final_stocks = stocks
+        individual.execution_sequence = execution_sequence
     
     def evaluate_fitness(self, individual: Individual):
-        stocks = self.parser.initial_stocks.copy()
-        total_time = 0
-        executed_processes = []
-
-        for process_name in individual.process_sequence:
-            process = next((p for p in self.parser.processes if p.name == process_name), None)
-            if process and process.can_execute(stocks):
-                stocks = process.execute(stocks)
-                total_time += process.duration
-                executed_processes.append(process_name)
-
-        individual.total_time = total_time
-        individual.final_stocks = stocks
-
-        # Calcul de la fitness
+        """Évalue la fitness d'un individu"""
+        self.simulate_execution(individual)
+        
         fitness = 0
-
+        stocks = individual.final_stocks
+        
+        # Fitness basée sur les objectifs
         for target in self.parser.optimize_targets:
             if target == 'time':
-                if executed_processes:
-                    fitness += max(0, 1000 - total_time)
+                # Pénaliser le temps long
+                fitness -= individual.total_time / 1000
             else:
-                fitness += stocks.get(target, 0) * 100  # mettre un poids fort pour motiver
-
-        # Bonus selon le nombre de processus exécutés
-        fitness += len(executed_processes) * 10
-
-        # Forte pénalité si aucun processus valide
-        if not executed_processes:
-            fitness -= 500
+                # Récompenser les ressources cibles
+                target_value = stocks.get(target, 0)
+                fitness += target_value
+        
+        # Bonus pour atteindre les objectifs
+        euro_value = stocks.get('euro', 0)
+        if euro_value >= 100000:
+            fitness += 50000  # Gros bonus pour atteindre l'objectif
+        elif euro_value >= 50000:
+            fitness += 10000
+        
+        # Pénaliser les solutions qui prennent trop de temps
+        if individual.total_time >= self.time_limit:
+            fitness *= 0.5
         
         individual.fitness = fitness
-
     
     def tournament_selection(self, tournament_size=3) -> Individual:
         """Sélection par tournoi"""
-        tournament = random.sample(self.population, tournament_size)
+        tournament = random.sample(self.population, min(tournament_size, len(self.population)))
         return max(tournament, key=lambda x: x.fitness)
     
     def crossover(self, parent1: Individual, parent2: Individual) -> Tuple[Individual, Individual]:
-        """Croisement à un point"""
+        """Croisement uniforme"""
         if random.random() > self.crossover_rate:
             return copy.deepcopy(parent1), copy.deepcopy(parent2)
         
-        # Point de croisement
-        min_len = min(len(parent1.process_sequence), len(parent2.process_sequence))
-        if min_len < 2:
-            return copy.deepcopy(parent1), copy.deepcopy(parent2)
+        child1_counts = {}
+        child2_counts = {}
+        
+        all_processes = set(parent1.process_counts.keys()) | set(parent2.process_counts.keys())
+        
+        for process in all_processes:
+            count1 = parent1.process_counts.get(process, 0)
+            count2 = parent2.process_counts.get(process, 0)
             
-        crossover_point = random.randint(1, min_len - 1)
+            if random.random() < 0.5:
+                child1_counts[process] = count1
+                child2_counts[process] = count2
+            else:
+                child1_counts[process] = count2
+                child2_counts[process] = count1
         
-        # Créer les enfants
-        child1_sequence = (parent1.process_sequence[:crossover_point] + 
-                          parent2.process_sequence[crossover_point:])
-        child2_sequence = (parent2.process_sequence[:crossover_point] + 
-                          parent1.process_sequence[crossover_point:])
-        
-        return Individual(child1_sequence), Individual(child2_sequence)
+        return Individual(child1_counts), Individual(child2_counts)
     
     def mutate(self, individual: Individual):
-        """Mutation par remplacement aléatoire"""
-        if random.random() < self.mutation_rate:
-            if individual.process_sequence:
-                # Remplacer un processus aléatoire
-                index = random.randint(0, len(individual.process_sequence) - 1)
-                process_names = [p.name for p in self.parser.processes]
-                individual.process_sequence[index] = random.choice(process_names)
+        """Mutation des compteurs"""
+        for process_name in individual.process_counts:
+            if random.random() < self.mutation_rate:
+                # Mutation forte pour les processus rentables
+                if self.process_profitability.get(process_name, 0) > 1:
+                    individual.process_counts[process_name] += random.randint(-50, 200)
+                else:
+                    individual.process_counts[process_name] += random.randint(-20, 50)
                 
-        # Mutation d'ajout/suppression
-        if random.random() < self.mutation_rate / 2:
-            if len(individual.process_sequence) > 1 and random.random() < 0.5:
-                # Supprimer un processus
-                individual.process_sequence.pop(random.randint(0, len(individual.process_sequence) - 1))
-            else:
-                # Ajouter un processus
-                process_names = [p.name for p in self.parser.processes]
-                individual.process_sequence.append(random.choice(process_names))
+                # Garder les valeurs positives
+                individual.process_counts[process_name] = max(0, individual.process_counts[process_name])
     
     def run(self):
         """Exécute l'algorithme génétique"""
-        # Initialiser la population
+        print("Création de la population initiale...")
         self.population = [self.create_random_individual() for _ in range(self.population_size)]
         
-        # Évaluer la population initiale
+        print("Évaluation initiale...")
         for individual in self.population:
             self.evaluate_fitness(individual)
         
@@ -235,12 +352,12 @@ class GeneticAlgorithm:
             # Nouvelle population
             new_population = []
             
-            # Élitisme - garder les meilleurs
+            # Élitisme
             self.population.sort(key=lambda x: x.fitness, reverse=True)
-            elite_size = self.population_size // 10
+            elite_size = max(1, self.population_size // 10)
             new_population.extend(copy.deepcopy(self.population[:elite_size]))
             
-            # Générer le reste de la population
+            # Générer le reste
             while len(new_population) < self.population_size:
                 parent1 = self.tournament_selection()
                 parent2 = self.tournament_selection()
@@ -252,10 +369,9 @@ class GeneticAlgorithm:
                 
                 new_population.extend([child1, child2])
             
-            # Limiter la taille de la population
             new_population = new_population[:self.population_size]
             
-            # Évaluer la nouvelle population
+            # Évaluer
             for individual in new_population:
                 self.evaluate_fitness(individual)
             
@@ -265,14 +381,10 @@ class GeneticAlgorithm:
             best_individual = max(self.population, key=lambda x: x.fitness)
             best_fitness_history.append(best_individual.fitness)
             
-            if generation % 100 == 0:
-                print(f"Génération {generation}: Meilleure fitness = {best_individual.fitness}")
-                print(f"Meilleure séquence: {best_individual.process_sequence[:10]}...")
-                print(f"Temps total: {best_individual.total_time}")
-                print(f"Stocks finaux: {best_individual.final_stocks}")
-                print("-" * 50)
+            if generation % 50 == 0:
+                euros = best_individual.final_stocks.get('euro', 0)
+                print(f"Génération {generation}: Fitness = {best_individual.fitness:.0f}, Euros = {euros}, Temps = {best_individual.total_time}")
         
-        # Retourner le meilleur individu
         best_individual = max(self.population, key=lambda x: x.fitness)
         return best_individual, best_fitness_history
 
@@ -281,56 +393,49 @@ def load_file_content(path: str) -> str:
     with open(path, 'r', encoding='utf-8') as file:
         return file.read()
 
-# Exemple d'utilisation
 def main():
-
-    file_path = "resources/simple"  
+    # Contenu du fichier intégré
+    file_path = "resources/pomme"  
     file_content = load_file_content(file_path)
 
     parser = ProcessFileParser()
     parser.parse_file(file_content)
+    parser.optimize()
 
+    print(f"Fichier chargé: {len(parser.processes)} processus, {len(parser.get_all_resource_types())} ressources")
+    print(f"Objectifs: {parser.optimize_targets}")
 
-    print(f"Nice file! {len(parser.processes)} processes, {len(parser.get_all_resource_types())} stocks, {round(len(parser.optimize_targets) / 2)} to optimize")
-
-    # Exécuter l'algorithme génétique
-    print("=== EXÉCUTION DE L'ALGORITHME GÉNÉTIQUE ===")
-    ga = GeneticAlgorithm(parser, population_size=100, generations=300, mutation_rate=0.15)
+    # Algorithme génétique optimisé
+    print("\n=== ALGORITHME GÉNÉTIQUE OPTIMISÉ ===")
+    parser.processes = parser.best_path
+    ga = GeneticAlgorithm(parser, population_size=50, generations=300, 
+                         mutation_rate=0.2, time_limit=50000)
     best_solution, fitness_history = ga.run()
 
-    print("\n" + "="*50)
-    print("MEILLEURE SOLUTION TROUVÉE:")
-    print("="*50)
-    print(f"Séquence optimale: {best_solution.process_sequence}")
-    print(f"Fitness: {best_solution.fitness}")
-    print(f"Temps total: {best_solution.total_time}")
-    print(f"Stocks finaux: {best_solution.final_stocks}")
-
-    # Analyser la solution en détail
-    print("\n=== ANALYSE DÉTAILLÉE DE LA SOLUTION ===")
-    stocks = parser.initial_stocks.copy()
-    total_time = 0
-
-    print(f"État initial: {stocks}")
-
-    for i, process_name in enumerate(best_solution.process_sequence):
-        process = next((p for p in parser.processes if p.name == process_name), None)
-        if process and process.can_execute(stocks):
-            old_stocks = stocks.copy()
-            stocks = process.execute(stocks)
-            total_time += process.duration
-            print(f"Étape {i+1}: {process_name}")
-            print(f"  Avant: {old_stocks} -> Après: {stocks}")
-            print(f"  Temps: +{process.duration} (total: {total_time})")
-        else:
-            print(f"Étape {i+1}: {process_name} - IMPOSSIBLE (ressources insuffisantes)")
-
-    print(f"\nRésultat final: {len([p for p in best_solution.process_sequence if next((pr for pr in parser.processes if pr.name == p), None) and next((pr for pr in parser.processes if pr.name == p), None).can_execute(parser.initial_stocks)])} processus exécutables")
-    for target in parser.optimize_targets:
-        if target != "time":
-            print(f"{target.capitalize()} produits: {stocks.get(target, 0)}")
-
-    print(f"Temps total: {total_time}")
+    print("\n" + "="*60)
+    print("MEILLEURE SOLUTION:")
+    print("="*60)
+    print(f"Fitness: {best_solution.fitness:.0f}")
+    print(f"Temps utilisé: {best_solution.total_time}/{ga.time_limit}")
+    print(f"Euros finaux: {best_solution.final_stocks.get('euro', 0)}")
+    
+    print(f"\nCompteurs de processus:")
+    for process_name, count in sorted(best_solution.process_counts.items(), 
+                                    key=lambda x: x[1], reverse=True):
+        if count > 0:
+            print(f"  {process_name}: {count}")
+    
+    print(f"\nStocks finaux:")
+    for resource, quantity in best_solution.final_stocks.items():
+        if quantity > 0:
+            print(f"  {resource}: {quantity}")
+    
+    # Vérifier si l'objectif est atteint
+    euros = best_solution.final_stocks.get('euro', 0)
+    if euros >= 100000:
+        print(f"\n🎉 OBJECTIF ATTEINT! {euros} euros >= 100000")
+    else:
+        print(f"\n❌ Objectif non atteint: {euros} euros < 100000")
 
 if __name__ == "__main__":
     main()

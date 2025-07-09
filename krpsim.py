@@ -180,6 +180,7 @@ class Individual:
         self.final_stocks = {}
         self.executed_counts = {}
         self.process_counts_origin = origin
+        self.execution_trace = []
 
     def __str__(self):
         return f"Counts: {self.process_counts}, Fitness: {self.fitness}, Time: {self.total_time}"
@@ -332,6 +333,9 @@ class GeneticAlgorithm:
                         # Programmer la fin du processus
                         end_time = current_time + process.duration
                         running_processes.append((end_time, process, process.outputs))
+
+                        # Enregistrer l'instant du DÉBUT
+                        individual.execution_trace.append((current_time, process.name))
                         
                         individual.executed_counts[process.name] = individual.executed_counts.get(process.name, 0) + 1
 
@@ -351,7 +355,6 @@ class GeneticAlgorithm:
                     for res, qty in outputs.items():
                         future_stocks[res] = future_stocks.get(res, 0) + qty
 
-                # Y a-t-il un processus exécutable avec ces stocks futurs ?
                 possible_future = False
                 for process_name, count in remaining_counts.items():
                     if count <= 0:
@@ -362,9 +365,9 @@ class GeneticAlgorithm:
                         break
 
                 if possible_future:
-                    # On avance le temps d'une unité (ou tu pourrais chercher la prochaine opportunité possible)
                     current_time += 1
                 else:
+                    individual.execution_trace.append((current_time+1, "no more process doable"))
                     break
 
 
@@ -551,6 +554,23 @@ def load_file_content(path: str) -> str:
             raise ValueError(f"The file '{path}' is empty or contains only whitespace.")
         return content
 
+def load_and_parse_file(file_path: str) -> ProcessFileParser:
+    try:
+        file_content = load_file_content(file_path)
+    except (FileNotFoundError, PermissionError, ValueError) as e:
+        print(f"Error while opening the file: {e}")
+        sys.exit(1)
+
+    parser = ProcessFileParser()
+    try:
+        parser.parse_file(file_content)
+    except Exception as e:
+        print(f"Parsing error: {e}")
+        sys.exit(1)
+
+    return parser
+
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: krpsim <file> <delay>")
@@ -565,19 +585,7 @@ def main():
         print("Error: The delay must be a positive integer.")
         sys.exit(1)
 
-    try:
-        file_content = load_file_content(file_path)
-    except (FileNotFoundError, PermissionError, ValueError) as e:
-        print(f"Error while opening the file: {e}")
-        sys.exit(1)
-
-    parser = ProcessFileParser()
-
-    try:
-        parser.parse_file(file_content)
-    except Exception as e:
-        print(f"Parsing error: {e}")
-        sys.exit(1)
+    parser = load_and_parse_file(file_path)
 
     print(f"File loaded: {len(parser.processes)} processes, {len(parser.get_all_resource_types())} resources")
     print(f"Optimization targets: {parser.optimize_targets}")
@@ -603,6 +611,20 @@ def main():
     for resource, quantity in best_solution.final_stocks.items():
         if quantity > 0:
             print(f"  {resource}: {quantity}")
+
+    # Enregistrer la trace et les stocks finaux dans trace.txt
+    with open("trace.txt", "w", encoding="utf-8") as f:
+        f.write("=== FINAL STOCKS ===\n")
+        for resource, quantity in best_solution.final_stocks.items():
+            if quantity > 0:
+                f.write(f"{resource}: {quantity}\n")
+
+        f.write("\n=== EXECUTION TRACE ===\n")
+        for time, process_name in sorted(best_solution.execution_trace):
+            f.write(f"Time {time}: {process_name}\n")
+
+    print("\nExecution trace and final stocks saved to trace.txt")
+
     
 if __name__ == "__main__":
     main()

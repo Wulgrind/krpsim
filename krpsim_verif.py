@@ -1,41 +1,79 @@
 import sys
 from krpsim import ProcessFileParser, load_and_parse_file
 from collections import defaultdict
+import os
 
 def load_trace(trace_path: str):
+    if not os.path.isfile(trace_path):
+        print(f"Error: Trace file '{trace_path}' does not exist.")
+        sys.exit(1)
+    if not os.access(trace_path, os.R_OK):
+        print(f"Error: Trace file '{trace_path}' is not readable (permission denied).")
+        sys.exit(1)
+
     final_stocks = {}
     trace = []
     max_delay = None
 
-    with open(trace_path, 'r', encoding='utf-8') as f:
-        mode = None
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("==="):
-                if "MAX DELAY" in line:
-                    mode = "max"
-                elif "FINAL" in line:
-                    mode = "stock"
-                elif "TRACE" in line:
-                    mode = "trace"
-                continue
+    try:
+        with open(trace_path, 'r', encoding='utf-8') as f:
+            mode = None
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
 
-            if mode == "max":
-                max_delay = int(line.strip())
-            elif mode == "stock":
-                if ':' in line:
+                if line.startswith("==="):
+                    if "MAX DELAY" in line:
+                        mode = "max"
+                    elif "FINAL" in line:
+                        mode = "stock"
+                    elif "TRACE" in line:
+                        mode = "trace"
+                    continue
+
+                if mode == "max":
+                    try:
+                        max_delay = int(line.strip())
+                    except ValueError:
+                        print(f"Error: Invalid MAX DELAY at line {line_num}: '{line}'")
+                        sys.exit(1)
+                elif mode == "stock":
+                    if ':' not in line:
+                        print(f"Error: Invalid stock line at line {line_num}: '{line}'")
+                        sys.exit(1)
                     k, v = line.split(':', 1)
-                    final_stocks[k.strip()] = int(v.strip())
-            elif mode == "trace":
-                if line.startswith("Time"):
+                    try:
+                        final_stocks[k.strip()] = int(v.strip())
+                    except ValueError:
+                        print(f"Error: Invalid stock quantity at line {line_num}: '{line}'")
+                        sys.exit(1)
+                elif mode == "trace":
+                    if not line.startswith("Time"):
+                        print(f"Error: Invalid trace line at line {line_num}: '{line}'")
+                        sys.exit(1)
                     parts = line.split(":")
-                    time = int(parts[0].replace("Time", "").strip())
-                    name = ":".join(parts[1:]).strip()
-                    trace.append((time, name))
+                    try:
+                        time = int(parts[0].replace("Time", "").strip())
+                        name = ":".join(parts[1:]).strip()
+                        trace.append((time, name))
+                    except ValueError:
+                        print(f"Error: Invalid time in trace at line {line_num}: '{line}'")
+                        sys.exit(1)
+
+        if max_delay is None:
+            print(f"Error: Missing MAX DELAY in trace file '{trace_path}'.")
+            sys.exit(1)
+        if not trace:
+            print(f"Error: Trace section is empty in trace file '{trace_path}'.")
+            sys.exit(1)
+
+    except Exception as e:
+        print(f"Error: Failed to read trace file '{trace_path}': {e}")
+        sys.exit(1)
 
     return max_delay, final_stocks, trace
+
 
 
 

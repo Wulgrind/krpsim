@@ -1,0 +1,7 @@
+CO2:10
+O2:10
+
+photosynthese:(CO2:2):(O2:2;fruit:1):5
+respirer:(O2:2):(CO2:2):5
+
+optimize:(fruit;time)

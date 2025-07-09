@@ -3,6 +3,8 @@ import copy
 from typing import List, Dict, Tuple
 import re
 import gc
+import sys
+import os
 
 class Process:
     def __init__(self, name: str, inputs: Dict[str, int], outputs: Dict[str, int], duration: int):
@@ -58,56 +60,116 @@ class ProcessFileParser:
     
     def parse_file(self, content: str):
         lines = content.strip().split('\n')
-        
-        for line in lines:
+
+        if not lines:
+            raise ValueError("The file is empty after stripping whitespace.")
+
+        has_stock = False
+        has_process = False
+        has_optimize = False
+
+        for idx, line in enumerate(lines, start=1):
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-                
+
             if ':' in line and not line.startswith('optimize:'):
                 if '(' not in line:
                     parts = line.split(':')
-                    if len(parts) == 2:
-                        resource, quantity = parts
-                        self.initial_stocks[resource.strip()] = int(quantity.strip())
+                    if len(parts) != 2:
+                        raise ValueError(f"Invalid stock declaration on line {idx}: '{line}'")
+                    resource, quantity = parts
+                    resource = resource.strip()
+                    quantity = quantity.strip()
+                    if not resource:
+                        raise ValueError(f"Empty stock name on line {idx}.")
+                    if not quantity.isdigit():
+                        raise ValueError(f"Invalid stock quantity on line {idx}: '{quantity}'")
+                    self.initial_stocks[resource] = int(quantity)
+                    has_stock = True
                 else:
                     self.parse_process(line)
+                    has_process = True
             elif line.startswith('optimize:'):
                 targets_str = line.replace('optimize:', '').strip()
-                if targets_str.startswith('(') and targets_str.endswith(')'):
-                    targets_str = targets_str[1:-1]  
+                if not targets_str:
+                    raise ValueError(f"No optimization target specified on line {idx}.")
+                if not (targets_str.startswith('(') and targets_str.endswith(')')):
+                    raise ValueError(f"Optimization line must use parentheses on line {idx}.")
+                targets_str = targets_str[1:-1]
                 targets = targets_str.split(';')
                 for target in targets:
                     target = target.strip()
                     if target:
                         self.optimize_targets.append(target)
-                        for targ in self.optimize_targets:
-                            if not "time" in targ :
-                                self.target = targ
-    
+                has_optimize = True
+
+        if not has_stock:
+            raise ValueError("No initial stocks defined in the file.")
+        if not has_process:
+            raise ValueError("No process definitions found in the file.")
+        if not has_optimize:
+            raise ValueError("No optimization targets found in the file.")
+
+        # Pick target
+        for targ in self.optimize_targets:
+            if "time" not in targ:
+                self.target = targ
+
     def parse_process(self, line: str):
-        pattern = r'(\w+):\(([^)]*)\):\(([^)]*)\):(\d+)'
+        line = line.strip()
+        pattern = r'^(\w+):\((.*?)\):\((.*?)\):(\d+)$'
         match = re.match(pattern, line)
-        
-        if match:
-            name = match.group(1)
-            inputs_str = match.group(2)
-            outputs_str = match.group(3)
-            duration = int(match.group(4))
-            
-            inputs = self.parse_resources(inputs_str)
-            outputs = self.parse_resources(outputs_str)
-            
-            process = Process(name, inputs, outputs, duration)
-            self.processes.append(process)
-    
-    def parse_resources(self, resource_str: str) -> Dict[str, int]:
+
+        if not match:
+            raise ValueError(f"Invalid process format: '{line}'")
+
+        name = match.group(1).strip()
+        inputs_str = match.group(2).strip()
+        outputs_str = match.group(3).strip()
+        duration_str = match.group(4).strip()
+
+        if not name:
+            raise ValueError(f"Process name is empty in line: '{line}'")
+
+        try:
+            duration = int(duration_str)
+            if duration <= 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError(f"Invalid duration in process: '{duration_str}' in line: '{line}'")
+
+        inputs = self.parse_resources(inputs_str, context=f"inputs of process '{name}'")
+        outputs = self.parse_resources(outputs_str, context=f"outputs of process '{name}'")
+
+        process = Process(name, inputs, outputs, duration)
+        self.processes.append(process)
+
+    def parse_resources(self, resource_str: str, context: str = "") -> Dict[str, int]:
         resources = {}
         if resource_str.strip():
             for item in resource_str.split(';'):
-                if ':' in item:
-                    resource, quantity = item.split(':')
-                    resources[resource.strip()] = int(quantity.strip())
+                item = item.strip()
+                if not item:
+                    continue
+
+                if ':' not in item:
+                    raise ValueError(f"Invalid resource entry '{item}' in {context}.")
+
+                resource, quantity = item.split(':', 1)
+                resource = resource.strip()
+                quantity = quantity.strip()
+
+                if not resource:
+                    raise ValueError(f"Empty resource name in {context}.")
+                if not quantity.isdigit() or int(quantity) <= 0:
+                    raise ValueError(f"Invalid quantity '{quantity}' for resource '{resource}' in {context}.")
+
+                if resource in resources:
+                    raise ValueError(f"Duplicate resource '{resource}' in {context}.")
+
+                resources[resource] = int(quantity)
+
         return resources
 
 class Individual:
@@ -477,39 +539,67 @@ class GeneticAlgorithm:
 
 
 def load_file_content(path: str) -> str:
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"The file '{path}' does not exist or is not a valid file.")
+    if not os.access(path, os.R_OK):
+        raise PermissionError(f"The file '{path}' cannot be read (permission denied).")
+    if os.path.getsize(path) == 0:
+        raise ValueError(f"The file '{path}' is empty.")
     with open(path, 'r', encoding='utf-8') as file:
-        return file.read()
+        content = file.read()
+        if not content.strip():
+            raise ValueError(f"The file '{path}' is empty or contains only whitespace.")
+        return content
 
 def main():
-    # Contenu du fichier intégré
-    file_path = "resources/pomme"  
-    file_content = load_file_content(file_path)
+    if len(sys.argv) != 3:
+        print("Usage: krpsim <file> <delay>")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
+    try:
+        time_limit = int(sys.argv[2])
+        if time_limit <= 0:
+            raise ValueError
+    except ValueError:
+        print("Error: The delay must be a positive integer.")
+        sys.exit(1)
+
+    try:
+        file_content = load_file_content(file_path)
+    except (FileNotFoundError, PermissionError, ValueError) as e:
+        print(f"Error while opening the file: {e}")
+        sys.exit(1)
 
     parser = ProcessFileParser()
-    parser.parse_file(file_content)
 
-    print(f"Fichier chargé: {len(parser.processes)} processus, {len(parser.get_all_resource_types())} ressources")
-    print(f"Objectifs: {parser.optimize_targets}")
+    try:
+        parser.parse_file(file_content)
+    except Exception as e:
+        print(f"Parsing error: {e}")
+        sys.exit(1)
 
-    # Algorithme génétique optimisé
-    print("\n=== ALGORITHME GÉNÉTIQUE OPTIMISÉ ===")
-    ga = GeneticAlgorithm(parser, population_size=20, generations=450, 
-                         mutation_rate=0.2, time_limit=50000)
+    print(f"File loaded: {len(parser.processes)} processes, {len(parser.get_all_resource_types())} resources")
+    print(f"Optimization targets: {parser.optimize_targets}")
+
+    print("\n=== RUNNING GENETIC ALGORITHM ===")
+    ga = GeneticAlgorithm(parser, population_size=20, generations=450,
+                          mutation_rate=0.2, time_limit=time_limit)
     best_solution = ga.run()
 
     print("\n" + "="*60)
-    print("MEILLEURE SOLUTION:")
+    print("BEST SOLUTION FOUND:")
     print("="*60)
     print(f"Fitness: {best_solution.fitness:.0f}")
-    print(f"Temps utilisé: {best_solution.total_time}/{ga.time_limit}")
-    print(f"{parser.target} finaux: {best_solution.final_stocks.get(parser.target, 0)}")
-    
-    print(f"\nProcessus exécutés:")
+    print(f"Time used: {best_solution.total_time}/{ga.time_limit}")
+    print(f"Final {parser.target}: {best_solution.final_stocks.get(parser.target, 0)}")
+
+    print("\nProcesses executed:")
     for process_name, count in sorted(best_solution.executed_counts.items(), key=lambda x: x[1], reverse=True):
         if count > 0:
             print(f"  {process_name}: {count}")
-    
-    print(f"\nStocks finaux:")
+
+    print("\nFinal stocks:")
     for resource, quantity in best_solution.final_stocks.items():
         if quantity > 0:
             print(f"  {resource}: {quantity}")

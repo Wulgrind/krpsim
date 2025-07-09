@@ -5,6 +5,7 @@ from collections import defaultdict
 def load_trace(trace_path: str):
     final_stocks = {}
     trace = []
+    max_delay = None
 
     with open(trace_path, 'r', encoding='utf-8') as f:
         mode = None
@@ -13,13 +14,17 @@ def load_trace(trace_path: str):
             if not line:
                 continue
             if line.startswith("==="):
-                if "FINAL" in line:
+                if "MAX DELAY" in line:
+                    mode = "max"
+                elif "FINAL" in line:
                     mode = "stock"
                 elif "TRACE" in line:
                     mode = "trace"
                 continue
 
-            if mode == "stock":
+            if mode == "max":
+                max_delay = int(line.strip())
+            elif mode == "stock":
                 if ':' in line:
                     k, v = line.split(':', 1)
                     final_stocks[k.strip()] = int(v.strip())
@@ -30,10 +35,11 @@ def load_trace(trace_path: str):
                     name = ":".join(parts[1:]).strip()
                     trace.append((time, name))
 
-    return final_stocks, trace
+    return max_delay, final_stocks, trace
 
 
-def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
+
+def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_delay: int):
     processes = {p.name: p for p in parser.processes}
     stocks = parser.initial_stocks.copy()
 
@@ -41,51 +47,50 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
     for t, pname in trace:
         trace_by_time[t].append(pname)
 
-    running_processes = []  # liste de tuples (end_time, pname)
-
+    running_processes = []  # [(end_time, pname)]
     all_times = sorted(trace_by_time.keys())
     current_time_idx = 0
 
     while current_time_idx < len(all_times) or running_processes:
-        # Si on a encore des events, on avance au prochain temps de trace
         if current_time_idx < len(all_times):
             t = all_times[current_time_idx]
         else:
-            # Plus de trace → avancer au prochain end_time
             t = min(p[0] for p in running_processes)
 
-        # Terminer tous les process prévus jusqu’à maintenant
+        # Si on dépasse le MAX_DELAY, on arrête tout
+        if t > max_delay:
+            print(f"Stopped: reached MAX_DELAY {max_delay}")
+            break
+
+        # Terminer tous les process qui finissent maintenant
         finished_now = [p for p in running_processes if p[0] <= t]
         for end_time, pname in sorted(finished_now):
+            if end_time > max_delay:
+                continue  # Ignore ceux qui dépassent MAX_DELAY
             p = processes[pname]
             for res, qty in p.outputs.items():
                 stocks[res] = stocks.get(res, 0) + qty
             print(f"Finished at time {end_time}: {pname}")
+
         running_processes = [p for p in running_processes if p[0] > t]
 
-        # Si on a une trace pour ce temps, traiter le batch
         if t in trace_by_time:
             batch = trace_by_time[t]
-
             total_needs = defaultdict(int)
+
             for pname in batch:
                 if pname == "no more process doable":
                     continue
-
                 if pname not in processes:
-                    print(f"ERROR: Process '{pname}' not found in config.")
-                    print(f"Final stocks: {stocks}")
+                    print(f"ERROR: Process '{pname}' not found.")
                     return False
-
                 p = processes[pname]
                 for res, qty in p.inputs.items():
                     total_needs[res] += qty
 
             for res, total in total_needs.items():
                 if stocks.get(res, 0) < total:
-                    print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res, 0)})")
-                    print(f"  Batch attempted: {[pname for pname in batch if pname != 'no more process doable']}")
-                    print(f"Final stocks: {stocks}")
+                    print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res,0)})")
                     return False
 
             for pname in batch:
@@ -100,27 +105,23 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
 
             current_time_idx += 1
         else:
-            # Si on est ici car on avait juste des process à finir → avancer
             current_time_idx += 1
 
-    # Finir tout ce qui reste (en théorie tout est déjà terminé)
-    if running_processes:
-        for end_time, pname in sorted(running_processes):
-            print(f"UNFINISHED: {pname} (should finish at {end_time})")
-            p = processes[pname]
-            for res, qty in p.outputs.items():
-                stocks[res] = stocks.get(res, 0) + qty
+    # On ignore tout ce qui dépasse MAX_DELAY
+    for end_time, pname in sorted(running_processes):
+        if end_time <= max_delay:
+            print(f"UNFINISHED (should finish before max): {pname} at {end_time}")
 
     # Vérifier stock final
     for res, qty in final_stocks_ref.items():
         if stocks.get(res, 0) != qty:
             print(f"ERROR: Final stock mismatch for '{res}': got {stocks.get(res, 0)}, expected {qty}")
-            print(f"Final stocks: {stocks}")
             return False
 
-    print("Trace verified successfully. ✅")
+    print("Trace verified successfully ✅")
     print(f"Final stocks: {stocks}")
     return True
+
 
 
 
@@ -133,10 +134,9 @@ def main():
     trace_path = sys.argv[2]
 
     parser = load_and_parse_file(config_path)
+    max_delay, final_stocks, trace = load_trace(trace_path)
 
-    final_stocks, trace = load_trace(trace_path)
-
-    if not verify(parser, final_stocks, trace):
+    if not verify(parser, final_stocks, trace, max_delay):
         sys.exit(1)
 
 if __name__ == "__main__":

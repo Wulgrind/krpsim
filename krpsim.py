@@ -591,7 +591,7 @@ def main():
     print(f"Optimization targets: {parser.optimize_targets}")
 
     print("\n=== RUNNING GENETIC ALGORITHM ===")
-    ga = GeneticAlgorithm(parser, population_size=20, generations=100, #450
+    ga = GeneticAlgorithm(parser, population_size=20, generations=450,
                           mutation_rate=0.2, time_limit=time_limit)
     best_solution = ga.run()
 

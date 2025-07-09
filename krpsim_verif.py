@@ -32,6 +32,7 @@ def load_trace(trace_path: str):
 
     return final_stocks, trace
 
+
 def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
     processes = {p.name: p for p in parser.processes}
     stocks = parser.initial_stocks.copy()
@@ -40,50 +41,77 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
     for t, pname in trace:
         trace_by_time[t].append(pname)
 
-    for t in sorted(trace_by_time.keys()):
-        batch = trace_by_time[t]
+    running_processes = []  # liste de tuples (end_time, pname)
 
-        # Calculer besoins globaux
-        total_needs = defaultdict(int)
-        for pname in batch:
-            if pname == "no more process doable":
-                continue
+    all_times = sorted(trace_by_time.keys())
+    current_time_idx = 0
 
-            if pname not in processes:
-                print(f"ERROR: Process '{pname}' not found in config.")
-                print(f"Final stocks: {stocks}")
-                return False
+    while current_time_idx < len(all_times) or running_processes:
+        # Si on a encore des events, on avance au prochain temps de trace
+        if current_time_idx < len(all_times):
+            t = all_times[current_time_idx]
+        else:
+            # Plus de trace → avancer au prochain end_time
+            t = min(p[0] for p in running_processes)
 
-            p = processes[pname]
-            for res, qty in p.inputs.items():
-                total_needs[res] += qty
-
-        # Vérifier faisabilité
-        for res, total in total_needs.items():
-            if stocks.get(res, 0) < total:
-                print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res, 0)})")
-                print(f"  Batch attempted: {[pname for pname in batch if pname != 'no more process doable']}")
-                print(f"Final stocks: {stocks}")
-                return False
-
-        # Consommer inputs
-        for pname in batch:
-            if pname == "no more process doable":
-                continue
-            p = processes[pname]
-            for res, qty in p.inputs.items():
-                stocks[res] -= qty
-
-        # Produire outputs et loguer
-        for pname in batch:
-            if pname == "no more process doable":
-                continue
+        # Terminer tous les process prévus jusqu’à maintenant
+        finished_now = [p for p in running_processes if p[0] <= t]
+        for end_time, pname in sorted(finished_now):
             p = processes[pname]
             for res, qty in p.outputs.items():
                 stocks[res] = stocks.get(res, 0) + qty
-            print(f"Executed at time {t}: {pname}")
+            print(f"Finished at time {end_time}: {pname}")
+        running_processes = [p for p in running_processes if p[0] > t]
 
-    # Vérifier stocks finaux
+        # Si on a une trace pour ce temps, traiter le batch
+        if t in trace_by_time:
+            batch = trace_by_time[t]
+
+            total_needs = defaultdict(int)
+            for pname in batch:
+                if pname == "no more process doable":
+                    continue
+
+                if pname not in processes:
+                    print(f"ERROR: Process '{pname}' not found in config.")
+                    print(f"Final stocks: {stocks}")
+                    return False
+
+                p = processes[pname]
+                for res, qty in p.inputs.items():
+                    total_needs[res] += qty
+
+            for res, total in total_needs.items():
+                if stocks.get(res, 0) < total:
+                    print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res, 0)})")
+                    print(f"  Batch attempted: {[pname for pname in batch if pname != 'no more process doable']}")
+                    print(f"Final stocks: {stocks}")
+                    return False
+
+            for pname in batch:
+                if pname == "no more process doable":
+                    continue
+                p = processes[pname]
+                for res, qty in p.inputs.items():
+                    stocks[res] -= qty
+                end_time = t + p.duration
+                running_processes.append((end_time, pname))
+                print(f"Started at time {t}: {pname} (will finish at {end_time})")
+
+            current_time_idx += 1
+        else:
+            # Si on est ici car on avait juste des process à finir → avancer
+            current_time_idx += 1
+
+    # Finir tout ce qui reste (en théorie tout est déjà terminé)
+    if running_processes:
+        for end_time, pname in sorted(running_processes):
+            print(f"UNFINISHED: {pname} (should finish at {end_time})")
+            p = processes[pname]
+            for res, qty in p.outputs.items():
+                stocks[res] = stocks.get(res, 0) + qty
+
+    # Vérifier stock final
     for res, qty in final_stocks_ref.items():
         if stocks.get(res, 0) != qty:
             print(f"ERROR: Final stock mismatch for '{res}': got {stocks.get(res, 0)}, expected {qty}")
@@ -93,6 +121,8 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list):
     print("Trace verified successfully. ✅")
     print(f"Final stocks: {stocks}")
     return True
+
+
 
 def main():
     if len(sys.argv) != 3:

@@ -614,7 +614,11 @@ def main():
 
     # Enregistrer la trace et les stocks finaux dans trace.txt
     with open("trace.txt", "w", encoding="utf-8") as f:
+        f.write(f"=== MAX DELAY ===\n")
+        f.write(f"{ga.time_limit}\n\n")
+
         f.write("=== FINAL STOCKS ===\n")
+
         for resource, quantity in best_solution.final_stocks.items():
             if quantity > 0:
                 f.write(f"{resource}: {quantity}\n")

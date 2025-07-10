@@ -64,6 +64,9 @@ def load_trace(trace_path: str):
         if max_delay is None:
             print(f"Error: Missing MAX DELAY in trace file '{trace_path}'.")
             sys.exit(1)
+        if not final_stocks:
+            print(f"Error: Missing FINAL STOCKS section in trace file '{trace_path}'.")
+            sys.exit(1)
         if not trace:
             print(f"Error: Trace section is empty in trace file '{trace_path}'.")
             sys.exit(1)
@@ -128,7 +131,7 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
 
             for res, total in total_needs.items():
                 if stocks.get(res, 0) < total:
-                    print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res,0)})")
+                    print(f"ERROR at time {t}: Not enough '{res}' (needed {total}, have {stocks.get(res, 0)})")
                     return False
 
             for pname in batch:
@@ -150,15 +153,22 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
         if end_time <= max_delay:
             print(f"UNFINISHED (should finish before max): {pname} at {end_time}")
 
-    # Vérifier stock final
+    # Vérifier stock final attendu
     for res, qty in final_stocks_ref.items():
         if stocks.get(res, 0) != qty:
             print(f"ERROR: Final stock mismatch for '{res}': got {stocks.get(res, 0)}, expected {qty}")
             return False
 
+    # Vérifier qu'aucun stock non attendu ne reste présent
+    for res in stocks:
+        if res not in final_stocks_ref and stocks[res] > 0:
+            print(f"ERROR: Resource '{res}' present in final stocks but not expected (quantity: {stocks[res]}).")
+            return False
+
     print("Trace verified successfully ✅")
     print(f"Final stocks: {stocks}")
     return True
+
 
 
 

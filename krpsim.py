@@ -14,21 +14,19 @@ class Process:
         self.duration = duration
         
     def can_execute(self, stocks: Dict[str, int]) -> bool:
-        """Vérifie si le processus peut être exécuté avec les stocks actuels"""
+        """Checks if the process can be run with current stocks"""
         for resource, needed in self.inputs.items():
             if stocks.get(resource, 0) < needed:
                 return False
         return True
     
     def execute(self, stocks: Dict[str, int]) -> Dict[str, int]:
-        """Exécute le processus et retourne les nouveaux stocks"""
+        """Executes the process and returns new inventory"""
         new_stocks = stocks.copy()
         
-        # Consommer les ressources d'entrée
         for resource, needed in self.inputs.items():
             new_stocks[resource] -= needed
             
-        # Ajouter les ressources de sortie
         for resource, produced in self.outputs.items():
             new_stocks[resource] = new_stocks.get(resource, 0) + produced
             
@@ -111,7 +109,6 @@ class ProcessFileParser:
         if not has_optimize:
             raise ValueError("No optimization targets found in the file.")
 
-        # Pick target
         for targ in self.optimize_targets:
             if "time" not in targ:
                 self.target = targ
@@ -174,7 +171,7 @@ class ProcessFileParser:
 
 class Individual:
     def __init__(self, process_counts: Dict[str, int], origin):
-        self.process_counts = process_counts  # Nombre de fois qu'on exécute chaque processus
+        self.process_counts = process_counts
         self.fitness = 0
         self.total_time = 0
         self.final_stocks = {}
@@ -200,12 +197,11 @@ class GeneticAlgorithm:
         self.old_fitness = 0
         self.stuck = 0
 
-        # Analyser la rentabilité des processus
         self.analyze_profitability()
         self.analyze_profitability_optimize_target()
 
     def analyze_profitability(self):
-        """Analyse la rentabilité de chaque processus"""
+        """Analyzes the profitability of each process"""
         self.process_profitability = {}
 
         initial_resources = set(self.parser.initial_stocks.keys())
@@ -214,7 +210,6 @@ class GeneticAlgorithm:
             profit = 0
             cost = 0
             
-            # Calculer le coût en target
             cost += process.inputs.get(self.parser.target, 0)
             
             bonus = 0
@@ -226,13 +221,12 @@ class GeneticAlgorithm:
 
             profit += process.outputs.get(self.parser.target, 0)
             
-            # Rentabilité = gain / (coût + durée)
             if cost > 0 or process.duration > 0:
                 self.process_profitability[process.name] = profit / (cost + process.duration / 100)
             else:
                 self.process_profitability[process.name] = profit
         
-        print("Analyse de rentabilité:")
+        print("Profitability analysis:")
         for name, profit in sorted(self.process_profitability.items(), key=lambda x: x[1], reverse=True):
             print(f"  {name}: {profit:.3f}")
 
@@ -256,12 +250,12 @@ class GeneticAlgorithm:
             else:
                 self.target_profitability[process.name] = profit
 
-        print("\nAnalyse de rentabilité avec priorité à la target:")
+        print("\nProfitability analysis with priority to the target:")
         for name, profit in sorted(self.target_profitability.items(), key=lambda x: x[1], reverse=True):
             print(f"  {name}: {profit:.3f}")
         
     def create_random_individual(self, use_target=False) -> Individual:
-        """Crée un individu basé soit sur la rentabilité classique, soit sur la cible uniquement"""
+        """Creates an individual based on either classic profitability or target only"""
         process_counts = {}
         
         profitability = self.target_profitability if use_target else self.process_profitability
@@ -280,7 +274,7 @@ class GeneticAlgorithm:
             return Individual(process_counts, origin="general")
     
     def simulate_execution(self, individual: Individual):
-        """Simule l'exécution avec gestion du parallélisme"""
+        """Simulates execution with parallelism management"""
         individual.executed_counts = {}
         stocks = self.parser.initial_stocks.copy()
         current_time = 0
@@ -289,7 +283,6 @@ class GeneticAlgorithm:
         process_map = {p.name: p for p in self.parser.processes}
         
         while current_time < self.time_limit:
-            # Terminer les processus finis
             finished = [p for p in running_processes if p[0] <= current_time]
             for end_time, process, outputs in finished:
                 for resource, quantity in outputs.items():
@@ -297,12 +290,10 @@ class GeneticAlgorithm:
             
             running_processes = [p for p in running_processes if p[0] > current_time]
             
-            # Lancer de nouveaux processus
             launched_any = True
             while launched_any and current_time < self.time_limit:
                 launched_any = False
                 
-                # Trier les processus par priorité (rentabilité)
                 process_priority = [(name, count) for name, count in remaining_counts.items() 
                                     if count > 0 and name in process_map]
                 if individual.process_counts_origin == 'general':
@@ -326,15 +317,12 @@ class GeneticAlgorithm:
                         process = process_map[process_name]
                     
                     if process.can_execute(stocks):
-                        # Consommer les inputs
                         for resource, needed in process.inputs.items():
                             stocks[resource] -= needed
                         
-                        # Programmer la fin du processus
                         end_time = current_time + process.duration
                         running_processes.append((end_time, process, process.outputs))
 
-                        # Enregistrer l'instant du DÉBUT
                         individual.execution_trace.append((current_time, process.name))
                         
                         individual.executed_counts[process.name] = individual.executed_counts.get(process.name, 0) + 1
@@ -345,11 +333,9 @@ class GeneticAlgorithm:
                         if end_time > self.time_limit:
                             break
             
-                # Avancer le temps
             if running_processes:
                 current_time = min(p[0] for p in running_processes)
             else:
-                # Construire les stocks futurs (actuels + outputs des processus en cours)
                 future_stocks = stocks.copy()
                 for end_time, process, outputs in running_processes:
                     for res, qty in outputs.items():
@@ -381,7 +367,7 @@ class GeneticAlgorithm:
         process_map = {p.name: p for p in self.parser.processes}
     
     def evaluate_fitness(self, individual: Individual):
-        """Évalue la fitness d'un individu"""
+        """Evaluates the fitness of an individual"""
         self.simulate_execution(individual)
         
         fitness = 0
@@ -392,23 +378,22 @@ class GeneticAlgorithm:
             if targ != 'time':
                 target = targ
 
-        # Fitness basée sur les objectifs
         target_value = stocks.get(target, 0)
         fitness += target_value
         if 'time' in self.parser.optimize_targets:
-                # Pénaliser le temps long
+                # Penalize long time
             fitness -= individual.total_time / 1000
         
         individual.fitness = fitness
 
     
     def tournament_selection(self, tournament_size=3) -> Individual:
-        """Sélection par tournoi"""
+        """Selection by tournament"""
         tournament = random.sample(self.population, min(tournament_size, len(self.population)))
         return max(tournament, key=lambda x: x.fitness)
     
     def crossover(self, parent1: Individual, parent2: Individual) -> Tuple[Individual, Individual]:
-        """Croisement uniforme"""
+        """Uniform crossing"""
         if random.random() > self.crossover_rate:
             child1 = Individual(process_counts=dict(parent1.process_counts), origin = parent1.process_counts_origin)
             child2 = Individual(process_counts=dict(parent2.process_counts), origin = parent1.process_counts_origin)
@@ -433,10 +418,10 @@ class GeneticAlgorithm:
         return Individual(child1_counts, origin = parent1.process_counts_origin), Individual(child2_counts, origin = parent2.process_counts_origin)
     
     def mutate(self, individual: Individual):
-        """Mutation des compteurs"""
+        """Mutation of counters"""
         for process_name in individual.process_counts:
             if random.random() < self.mutation_rate:
-                # Mutation forte pour les processus rentables
+                # Strong change for profitable processes
                 if individual.process_counts_origin == 'general':
                     if self.process_profitability.get(process_name, 0) > 1:
                         individual.process_counts[process_name] += random.randint(-50, 200)
@@ -447,7 +432,7 @@ class GeneticAlgorithm:
                         individual.process_counts[process_name] += random.randint(-50, 200)
                     else:
                         individual.process_counts[process_name] += random.randint(-20, 50)
-                # Garder les valeurs positives
+                # Keep positive values
                 individual.process_counts[process_name] = max(0, individual.process_counts[process_name])
 
     def count_origins(self):
@@ -468,8 +453,8 @@ class GeneticAlgorithm:
         print(f"Origine des individus: target={target_based}, général={general_based}")
 
     def run(self):
-        """Exécute l'algorithme génétique"""
-        print("Création de la population initiale...")
+        """Runs the genetic algorithm"""
+        print("Creation of the initial population...")
         self.population = []
 
         if self.best_fits == "unknown":
@@ -483,23 +468,22 @@ class GeneticAlgorithm:
         else:
             self.population = [self.create_random_individual(use_target=False) for _ in range(self.population_size)]
         
-        print("Évaluation initiale...")
+        print("Initial assessment...")
         for individual in self.population:
             self.evaluate_fitness(individual)
         
         
         for generation in range(self.generations):
-            # Nouvelle population
             new_population = []
             
-            # Élitisme
+            # Elitism
             self.population.sort(key=lambda x: x.fitness, reverse=True)
             elite_size = max(1, self.population_size // 10)
             elite = self.population[:elite_size]
             new_population.extend([Individual(dict(ind.process_counts), origin=ind.process_counts_origin) for ind in elite])
 
             
-            # Générer le reste
+            # The rest of the population
             while len(new_population) < self.population_size:
                 parent1 = self.tournament_selection()
                 parent2 = self.tournament_selection()
@@ -513,13 +497,11 @@ class GeneticAlgorithm:
             
             new_population = new_population[:self.population_size]
             
-            # Évaluer
             for individual in new_population:
                 self.evaluate_fitness(individual)
             
             self.population = new_population
             
-            # Statistiques
             best_individual = max(self.population, key=lambda x: x.fitness)
             
             del new_population

@@ -78,8 +78,6 @@ def load_trace(trace_path: str):
     return max_delay, final_stocks, trace
 
 
-
-
 def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_delay: int):
     processes = {p.name: p for p in parser.processes}
     stocks = parser.initial_stocks.copy()
@@ -88,7 +86,7 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
     for t, pname in trace:
         trace_by_time[t].append(pname)
 
-    running_processes = []  # [(end_time, pname)]
+    running_processes = []
     all_times = sorted(trace_by_time.keys())
     current_time_idx = 0
 
@@ -98,16 +96,14 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
         else:
             t = min(p[0] for p in running_processes)
 
-        # Si on dépasse le MAX_DELAY, on arrête tout
         if t > max_delay:
             print(f"Stopped: reached MAX_DELAY {max_delay}")
             break
 
-        # Terminer tous les process qui finissent maintenant
         finished_now = [p for p in running_processes if p[0] <= t]
         for end_time, pname in sorted(finished_now):
             if end_time > max_delay:
-                continue  # Ignore ceux qui dépassent MAX_DELAY
+                continue
             p = processes[pname]
             for res, qty in p.outputs.items():
                 stocks[res] = stocks.get(res, 0) + qty
@@ -148,18 +144,15 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
         else:
             current_time_idx += 1
 
-    # On ignore tout ce qui dépasse MAX_DELAY
     for end_time, pname in sorted(running_processes):
         if end_time <= max_delay:
             print(f"UNFINISHED (should finish before max): {pname} at {end_time}")
 
-    # Vérifier stock final attendu
     for res, qty in final_stocks_ref.items():
         if stocks.get(res, 0) != qty:
             print(f"ERROR: Final stock mismatch for '{res}': got {stocks.get(res, 0)}, expected {qty}")
             return False
 
-    # Vérifier qu'aucun stock non attendu ne reste présent
     for res in stocks:
         if res not in final_stocks_ref and stocks[res] > 0:
             print(f"ERROR: Resource '{res}' present in final stocks but not expected (quantity: {stocks[res]}).")
@@ -168,8 +161,6 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
     print("Trace verified successfully ✅")
     print(f"Final stocks: {stocks}")
     return True
-
-
 
 
 

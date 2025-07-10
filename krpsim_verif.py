@@ -175,7 +175,7 @@ def verify(parser: ProcessFileParser, final_stocks_ref: dict, trace: list, max_d
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: krpsim_verif <config_file> <trace_file>")
+        print("Usage: krpsim_verif <file> <result_to_test>")
         sys.exit(1)
 
     config_path = sys.argv[1]

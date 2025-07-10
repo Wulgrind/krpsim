@@ -304,10 +304,10 @@ class GeneticAlgorithm:
                 
                 # Trier les processus par priorité (rentabilité)
                 process_priority = [(name, count) for name, count in remaining_counts.items() 
-                                  if count > 0 and name in process_map]
+                                    if count > 0 and name in process_map]
                 if individual.process_counts_origin == 'general':
                     process_priority.sort(key=lambda x: self.process_profitability.get(x[0], 0), reverse=True)
-                else :
+                else:
                     process_priority.sort(key=lambda x: self.target_profitability.get(x[0], 0), reverse=True)
                 
                 unique_priority = []
@@ -367,11 +367,14 @@ class GeneticAlgorithm:
                 if possible_future:
                     current_time += 1
                 else:
-                    individual.execution_trace.append((current_time+1, "no more process doable"))
+                    individual.execution_trace.append((current_time + 1, "no more process doable"))
                     break
 
+        for end_time, process, outputs in running_processes:
+            if end_time == self.time_limit:
+                for resource, quantity in outputs.items():
+                    stocks[resource] = stocks.get(resource, 0) + quantity
 
-        
         individual.total_time = min(current_time, self.time_limit)
         individual.final_stocks = stocks
 

@@ -94,12 +94,16 @@ class ProcessFileParser:
                     raise ValueError(f"No optimization target specified on line {idx}.")
                 if not (targets_str.startswith('(') and targets_str.endswith(')')):
                     raise ValueError(f"Optimization line must use parentheses on line {idx}.")
+
                 targets_str = targets_str[1:-1]
+
                 targets = targets_str.split(';')
+
                 for target in targets:
                     target = target.strip()
-                    if target:
-                        self.optimize_targets.append(target)
+                    if not target:
+                        raise ValueError(f"Empty optimization target on line {idx}: '{line}'")
+                    self.optimize_targets.append(target)
                 has_optimize = True
 
         if not has_stock:
@@ -557,62 +561,65 @@ def load_and_parse_file(file_path: str) -> ProcessFileParser:
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: krpsim <file> <delay>")
-        sys.exit(1)
-
-    file_path = sys.argv[1]
     try:
-        time_limit = int(sys.argv[2])
-        if time_limit <= 0:
-            raise ValueError
-    except ValueError:
-        print("Error: The delay must be a positive integer.")
-        sys.exit(1)
+        if len(sys.argv) != 3:
+            print("Usage: krpsim <file> <delay>")
+            sys.exit(1)
 
-    parser = load_and_parse_file(file_path)
+        file_path = sys.argv[1]
+        try:
+            time_limit = int(sys.argv[2])
+            if time_limit <= 0:
+                raise ValueError
+        except ValueError:
+            print("Error: The delay must be a positive integer.")
+            sys.exit(1)
 
-    print(f"File loaded: {len(parser.processes)} processes, {len(parser.get_all_resource_types())} resources")
-    print(f"Optimization targets: {parser.optimize_targets}")
+        parser = load_and_parse_file(file_path)
 
-    print("\n=== RUNNING GENETIC ALGORITHM ===")
-    ga = GeneticAlgorithm(parser, population_size=20, generations=450,
-                          mutation_rate=0.2, time_limit=time_limit)
-    best_solution = ga.run()
+        print(f"File loaded: {len(parser.processes)} processes, {len(parser.get_all_resource_types())} resources")
+        print(f"Optimization targets: {parser.optimize_targets}")
 
-    print("\n" + "="*60)
-    print("BEST SOLUTION FOUND:")
-    print("="*60)
-    print(f"Fitness: {best_solution.fitness:.0f}")
-    print(f"Time used: {best_solution.total_time}/{ga.time_limit}")
-    print(f"Final {parser.target}: {best_solution.final_stocks.get(parser.target, 0)}")
+        print("\n=== RUNNING GENETIC ALGORITHM ===")
+        ga = GeneticAlgorithm(parser, population_size=20, generations=450,
+                            mutation_rate=0.2, time_limit=time_limit)
+        best_solution = ga.run()
 
-    print("\nProcesses executed:")
-    for process_name, count in sorted(best_solution.executed_counts.items(), key=lambda x: x[1], reverse=True):
-        if count > 0:
-            print(f"  {process_name}: {count}")
+        print("\n" + "="*60)
+        print("BEST SOLUTION FOUND:")
+        print("="*60)
+        print(f"Fitness: {best_solution.fitness:.0f}")
+        print(f"Time used: {best_solution.total_time}/{ga.time_limit}")
+        print(f"Final {parser.target}: {best_solution.final_stocks.get(parser.target, 0)}")
 
-    print("\nFinal stocks:")
-    for resource, quantity in best_solution.final_stocks.items():
-        if quantity > 0:
-            print(f"  {resource}: {quantity}")
+        print("\nProcesses executed:")
+        for process_name, count in sorted(best_solution.executed_counts.items(), key=lambda x: x[1], reverse=True):
+            if count > 0:
+                print(f"  {process_name}: {count}")
 
-    with open("trace.txt", "w", encoding="utf-8") as f:
-        f.write(f"=== MAX DELAY ===\n")
-        f.write(f"{ga.time_limit}\n\n")
-
-        f.write("=== FINAL STOCKS ===\n")
-
+        print("\nFinal stocks:")
         for resource, quantity in best_solution.final_stocks.items():
             if quantity > 0:
-                f.write(f"{resource}: {quantity}\n")
+                print(f"  {resource}: {quantity}")
 
-        f.write("\n=== EXECUTION TRACE ===\n")
-        for time, process_name in sorted(best_solution.execution_trace):
-            f.write(f"Time {time}: {process_name}\n")
+        with open("trace.txt", "w", encoding="utf-8") as f:
+            f.write(f"=== MAX DELAY ===\n")
+            f.write(f"{ga.time_limit}\n\n")
 
-    print("\nExecution trace and final stocks saved to trace.txt")
+            f.write("=== FINAL STOCKS ===\n")
 
+            for resource, quantity in best_solution.final_stocks.items():
+                if quantity > 0:
+                    f.write(f"{resource}: {quantity}\n")
+
+            f.write("\n=== EXECUTION TRACE ===\n")
+            for time, process_name in sorted(best_solution.execution_trace):
+                f.write(f"Time {time}: {process_name}\n")
+
+        print("\nExecution trace and final stocks saved to trace.txt")
+    except Exception as e:
+        print(f"Stop: {e}")
+        sys.exit(1)
     
 if __name__ == "__main__":
     main()
